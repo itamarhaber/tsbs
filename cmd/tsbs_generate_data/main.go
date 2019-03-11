@@ -38,6 +38,7 @@ const (
 	formatClickhouse  = "clickhouse"
 	formatInflux      = "influx"
 	formatMongo       = "mongo"
+	formatRedisTimeSeries = "redistimeseries"
 	formatSiriDB      = "siridb"
 	formatTimescaleDB = "timescaledb"
 
@@ -60,6 +61,7 @@ var (
 		formatClickhouse,
 		formatInflux,
 		formatMongo,
+		formatRedisTimeSeries,
 		formatSiriDB,
 		formatTimescaleDB,
 	}
@@ -318,6 +320,8 @@ func getSerializer(sim common.Simulator, format string, out *bufio.Writer) seria
 		return &serialize.InfluxSerializer{}
 	case formatMongo:
 		return &serialize.MongoSerializer{}
+	case formatRedisTimeSeries:
+		return &serialize.RedisTimeSeriesSerializer{}
 	case formatSiriDB:
 		return &serialize.SiriDBSerializer{}
 	case formatClickhouse:

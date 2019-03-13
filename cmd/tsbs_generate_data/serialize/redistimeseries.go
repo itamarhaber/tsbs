@@ -9,24 +9,24 @@ type RedisTimeSeriesSerializer struct{}
 // from.
 //
 // This function writes output that looks like:
-//LABELS hostname host_0 region eu-central-1 datacenter eu-central-1a rack 6 os Ubuntu15.10 arch x86 team SF service 19
-//cpu_usage_user{hostname=host_0,region=eu-central-1...} 1451606400000000000 58,cpu_usage_system 1451606400000000000 2,cpu_usage_idle 1451606400000000000 24
+//cpu_usage_user{hostname=host_0|region=eu-central-1...} 1451606400000000000 58 LABELS hostname host_0 region eu-central-1 ... measurement cpu fieldname usage_user
 //
 // Which the loader will decode into a set of TS.ADD commands for each fieldKey.
 func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error) {
-	// Labels row first, prefixed with name 'LABELS', following pairs of label names and label values
-	buf := make([]byte, 0, 256)
+	// Construct labels text, prefixed with name 'LABELS', following pairs of label names and label values
+	// This will be added to each key, with additional "fieldname" tag
+	labels := make([]byte, 0, 256)
 	labelsForKeyName:= make([]byte, 0, 256)
-	buf = append(buf, []byte("LABELS")...)
+	labels = append(labels, []byte(" LABELS")...)
 	for i, v := range p.tagValues {
-		buf = append(buf, ' ')
-		buf = append(buf, p.tagKeys[i]...)
-		buf = append(buf, ' ')
-		buf = append(buf, v...)
+		labels = append(labels, ' ')
+		labels = append(labels, p.tagKeys[i]...)
+		labels = append(labels, ' ')
+		labels = append(labels, v...)
 
 		// construct a string of {hostname=host_1,region=us-west-1,...} to be used as unique name for key
 		if i > 0 {
-			labelsForKeyName = append(labelsForKeyName, ',')
+			labelsForKeyName = append(labelsForKeyName, '|')
 		} else {
 			labelsForKeyName = append(labelsForKeyName, '{')
 		}
@@ -38,36 +38,33 @@ func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error)
 	if len(labelsForKeyName) > 0 {
 		labelsForKeyName = append(labelsForKeyName, '}')
 	}
-
 	// add measurement name as additional label to be used in queries
-	buf = append(buf, []byte(" measurement ")... )
-	buf = append(buf, p.measurementName...)
-	buf = append(buf, '\n')
-	_, err = w.Write(buf)
-	if err != nil {
-		return err
-	}
+	labels = append(labels, []byte(" measurement ")... )
+	labels = append(labels, p.measurementName...)
 
-	// Write comma separated string for each fieldKey in the form of: measurementName_fieldName timestamp fieldValue
-	buf = make([]byte, 0, 256)
+	// Write new line for each fieldKey in the form of: measurementName_fieldName timestamp fieldValue LABELS ....
+	buf := make([]byte, 0, 256)
 	for fieldID := 0; fieldID < len(p.fieldKeys); fieldID++ {
 		fieldName := p.fieldKeys[fieldID]
 		fieldValue := p.fieldValues[fieldID]
-		if fieldID > 0 {
-			buf = append(buf, ',')
-		}
-
+		// write unique key name
 		buf = append(buf, p.measurementName...)
 		buf = append(buf, '_')
 		buf = fastFormatAppend(fieldName, buf)
 		buf = append(buf, labelsForKeyName...)
 		buf = append(buf, ' ')
+		// write timestamp
 		buf = fastFormatAppend(p.timestamp.UTC().UnixNano(), buf)
 		buf = append(buf, ' ')
+		// write value
 		buf = fastFormatAppend(fieldValue, buf)
+		buf = append(buf, labels...)
+		// additional label of fieldname
+		buf = append(buf, []byte(" fieldname ")...)
+		buf = fastFormatAppend(fieldName, buf)
+		buf = append(buf, '\n')
 	}
 
-	buf = append(buf, '\n')
 	_, err = w.Write(buf)
 	return nil
 }

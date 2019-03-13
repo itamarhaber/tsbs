@@ -17,6 +17,7 @@ import (
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/databases/clickhouse"
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/databases/influx"
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/databases/mongo"
+	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/databases/redistimeseries"
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/databases/siridb"
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/databases/timescaledb"
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/uses/devops"
@@ -83,6 +84,8 @@ func getGenerator(format string, start, end time.Time, scale int) utils.DevopsGe
 		return mongo.NewNaiveDevops(start, end, scale)
 	} else if format == "siridb" {
 		return siridb.NewDevops(start, end, scale)
+	} else if format == "redistimeseries" {
+		return redistimeseries.NewDevops(start, end, scale)
 	} else if format == "timescaledb" {
 		tgen := timescaledb.NewDevops(start, end, scale)
 		tgen.UseJSON = timescaleUseJSON

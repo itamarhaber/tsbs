@@ -31,3 +31,14 @@ func TestRedisTimeSeriesSerializer(t *testing.T) {
 
 	testSerializer(t, cases, &RedisTimeSeriesSerializer{})
 }
+
+func TestRedisTimeSeriesSerializerErr(t *testing.T) {
+	p := testPointMultiField
+	s := &RedisTimeSeriesSerializer{}
+	err := s.Serialize(p, &errWriter{})
+	if err == nil {
+		t.Errorf("no error returned when expected")
+	} else if err.Error() != errWriterAlwaysErr {
+		t.Errorf("unexpected writer error: %v", err)
+	}
+}

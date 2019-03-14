@@ -58,13 +58,17 @@ func (p *processor) Init(_ int, _ bool) {}
 
 // ProcessBatch reads eventsBatches which contain rows of data for TS.ADD redis command string
 func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
+	var err error
 	events := b.(*eventsBatch)
 	if doLoad {
 		conn := p.dbc.client.Pool.Get()
 		for _, row := range events.rows {
 			sendRedisCommand(row, conn)
 		}
-		conn.Flush()
+		err = conn.Flush()
+		if err != nil {
+			log.Fatalf("Error while inserting: %v", err)
+		}
 
 	}
 	rowCnt := uint64(len(events.rows))

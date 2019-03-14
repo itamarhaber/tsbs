@@ -77,7 +77,7 @@ func (p *processor) ProcessQuery(q query.Query, isWarm bool) ([]*query.Stat, err
 	}
 	tq := q.(*query.RedisTimeSeries)
 
-	start := time.Now()
+
 	qry := string(tq.RedisQuery)
 
 	conn := redisConnector.Pool.Get()
@@ -86,6 +86,7 @@ func (p *processor) ProcessQuery(q query.Query, isWarm bool) ([]*query.Stat, err
 	for i := 1; i < len(t); i++ {
 		commandArgs[i-1] = t[i]
 	}
+	start := time.Now()
 	res ,err := conn.Do(t[0], commandArgs...)
 	if err != nil {
 		log.Fatalf("Command failed:%v %v\n", res, err)

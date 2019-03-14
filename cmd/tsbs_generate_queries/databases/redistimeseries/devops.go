@@ -48,31 +48,6 @@ func (d *Devops) GroupByTime(qi query.Query, nHosts, numMetrics int, timeRange t
 	d.fillInQuery(qi, humanLabel, humanDesc, redisQuery)
 }
 
-// GroupByOrderByLimit populates a query.Query that has a time WHERE clause, that groups by a truncated date, orders by that date, and takes a limit:
-// SELECT time_bucket('1 minute', time) AS t, MAX(cpu) FROM cpu
-// WHERE time < '$TIME'
-// GROUP BY t ORDER BY t DESC
-// LIMIT $LIMIT
-func (d *Devops) GroupByOrderByLimit(qi query.Query) {
-	print("group bu tyme limit\n")
-	//todo: implement for redistimeseries
-	/*
-	interval := d.Interval.RandWindow(time.Hour)
-	sql := fmt.Sprintf(`SELECT %s AS minute, max(usage_user)
-        FROM cpu
-        WHERE time < '%s'
-        GROUP BY minute
-        ORDER BY minute DESC
-        LIMIT 5`,
-		d.getTimeBucket(oneMinute),
-		interval.End.Format(goTimeFmt))
-
-	humanLabel := "RedisTimeSeries max cpu over last 5 min-intervals (random end)"
-	humanDesc := fmt.Sprintf("%s: %s", humanLabel, interval.EndString())
-	d.fillInQuery(qi, humanLabel, humanDesc, sql)
-	*/
-}
-
 // GroupByTimeAndPrimaryTag selects the AVG of numMetrics metrics under 'cpu' per device per hour for a day,
 // e.g. in pseudo-SQL:
 //
@@ -127,6 +102,23 @@ func (d *Devops) GroupByTimeAndPrimaryTag(qi query.Query, numMetrics int) {
 	*/
 }
 
+// MaxAllCPU fetches the aggregate across all CPU metrics per hour over 1 hour for a single host.
+// Currently only one host is supported
+func (d *Devops) MaxAllCPU(qi query.Query, nHosts int) {
+	interval := d.Interval.RandWindow(devops.MaxAllDuration)
+	hostnames := d.GetRandomHosts(nHosts)
+
+	redisQuery := fmt.Sprintf(`TS.MRANGE %d %d AGGREGATION max %d FILTER measurement=cpu hostname=%s`,
+		interval.Start.Unix(),
+		interval.End.Unix(),
+		oneHour,
+		//currently support only one host
+		hostnames[0])
+
+	humanLabel := devops.GetMaxAllLabel("RedisTimeSeries", nHosts)
+	humanDesc := fmt.Sprintf("%s: %s", humanLabel, interval.StartString())
+	d.fillInQuery(qi, humanLabel, humanDesc, redisQuery)
+}
 
 // fill Query fills the query struct with data
 func (d *Devops) fillInQuery(qi query.Query, humanLabel, humanDesc, redisQuery string) {

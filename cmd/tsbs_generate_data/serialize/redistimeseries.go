@@ -54,7 +54,7 @@ func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error)
 		buf = append(buf, labelsForKeyName...)
 		buf = append(buf, ' ')
 		// write timestamp
-		buf = fastFormatAppend(p.timestamp.UTC().UnixNano(), buf)
+		buf = fastFormatAppend(p.timestamp.UTC().Unix(), buf)
 		buf = append(buf, ' ')
 		// write value
 		buf = fastFormatAppend(fieldValue, buf)

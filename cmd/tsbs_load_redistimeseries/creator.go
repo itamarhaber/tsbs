@@ -13,11 +13,13 @@ func (d *dbCreator) Init() {
 }
 
 func (d *dbCreator) DBExists(dbName string) bool {
-	return false
+	return true
 }
 
 func (d *dbCreator) RemoveOldDB(dbName string) error {
-	return nil
+	 conn := d.client.Pool.Get()
+	 _, err := conn.Do("FLUSHALL")
+	 return err
 }
 
 func (d *dbCreator) CreateDB(dbName string) error {

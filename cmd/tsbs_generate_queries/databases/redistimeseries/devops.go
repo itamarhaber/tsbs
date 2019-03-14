@@ -38,8 +38,8 @@ func (d *Devops) GroupByTime(qi query.Query, nHosts, numMetrics int, timeRange t
 	hostnames := d.GetRandomHosts(nHosts)
 
 	redisQuery := fmt.Sprintf(`TS.MRANGE %d %d AGGREGATION max %d FILTER hostname=%s fieldname=%s`,
-		interval.Start.UnixNano(),
-		interval.End.UnixNano(),
+		interval.Start.Unix(),
+		interval.End.Unix(),
 		oneMinute * 5,
 		hostnames[0],
 		metric)

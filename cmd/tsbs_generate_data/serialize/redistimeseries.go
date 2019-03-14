@@ -66,6 +66,6 @@ func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error)
 	}
 
 	_, err = w.Write(buf)
-	return nil
+	return err
 }
 

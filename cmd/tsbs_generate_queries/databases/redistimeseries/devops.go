@@ -2,6 +2,7 @@ package redistimeseries
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/uses/devops"
@@ -30,8 +31,11 @@ func (d *Devops) GenerateEmptyQuery() query.Query {
 
 
 // GroupByTime fetches the MAX for numMetrics metrics under 'cpu', per minute for nhosts hosts,
-// every 5 mins for 1 hour
+// every 1 mins for 1 hour
 func (d *Devops) GroupByTime(qi query.Query, nHosts, numMetrics int, timeRange time.Duration) {
+	if numMetrics > 1 || nHosts > 1 {
+		log.Fatal("Not supported for more than 1 hostname/ 1 metric")
+	}
 	interval := d.Interval.RandWindow(timeRange)
 	metrics := devops.GetCPUMetricsSlice(numMetrics)
 	metric := metrics[0]
@@ -40,7 +44,7 @@ func (d *Devops) GroupByTime(qi query.Query, nHosts, numMetrics int, timeRange t
 	redisQuery := fmt.Sprintf(`TS.MRANGE %d %d AGGREGATION max %d FILTER hostname=%s fieldname=%s`,
 		interval.Start.Unix(),
 		interval.End.Unix(),
-		oneMinute * 5,
+		oneMinute,
 		hostnames[0],
 		metric)
 	humanLabel := fmt.Sprintf("RedisTimeSeries %d cpu metric(s), random %4d hosts, random %s by 1m", numMetrics, nHosts, timeRange)

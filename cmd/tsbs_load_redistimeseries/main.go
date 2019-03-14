@@ -70,6 +70,11 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 			log.Fatalf("Error while inserting: %v", err)
 		}
 
+		_, err := conn.Receive()
+		if err != nil {
+			log.Fatalf("Error while inserting: %v", err)
+		}
+
 	}
 	rowCnt := uint64(len(events.rows))
 	metricCnt := rowCnt
@@ -80,5 +85,5 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 
 
 func main() {
-	loader.RunBenchmark(&benchmark{dbc: &dbCreator{}}, load.SingleQueue)
+	loader.RunBenchmark(&benchmark{dbc: &dbCreator{}}, load.WorkerPerQueue)
 }

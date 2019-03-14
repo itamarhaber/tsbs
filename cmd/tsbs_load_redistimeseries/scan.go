@@ -35,7 +35,7 @@ func sendRedisCommand(line string, conn redis.Conn) {
 	}
 	err := conn.Send("TS.ADD", s...)
 	if err != nil {
-		fatal("TS.ADD failed: %s\n", err)
+		log.Fatalf("TS.ADD failed: %s\n", err)
 	}
 }
 type eventsBatch struct {

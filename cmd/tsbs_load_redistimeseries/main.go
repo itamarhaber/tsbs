@@ -65,16 +65,10 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 		for _, row := range events.rows {
 			sendRedisCommand(row, conn)
 		}
-		err = conn.Flush()
+		_, err = conn.Do("")
 		if err != nil {
 			log.Fatalf("Error while inserting: %v", err)
 		}
-
-		_, err := conn.Receive()
-		if err != nil {
-			log.Fatalf("Error while inserting: %v", err)
-		}
-
 	}
 	rowCnt := uint64(len(events.rows))
 	metricCnt := rowCnt

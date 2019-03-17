@@ -85,8 +85,13 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 			cmdLen++
 		}
 
+		err := conn.Flush()
+		if err != nil {
+			log.Fatalf("Error while inserting: %v", err)
+		}
+
 		for i := 0; i < cmdLen; i++ {
-			_, err := conn.Receive()
+			_, err = conn.Receive()
 			if err != nil {
 				log.Fatalf("Error while inserting: %v", err)
 			}

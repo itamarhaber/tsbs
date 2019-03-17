@@ -52,58 +52,27 @@ func (d *Devops) GroupByTime(qi query.Query, nHosts, numMetrics int, timeRange t
 	d.fillInQuery(qi, humanLabel, humanDesc, redisQuery)
 }
 
-// GroupByTimeAndPrimaryTag selects the AVG of numMetrics metrics under 'cpu' per device per hour for a day,
-// e.g. in pseudo-SQL:
-//
-// SELECT AVG(metric1), ..., AVG(metricN)
-// FROM cpu
-// WHERE time >= '$HOUR_START' AND time < '$HOUR_END'
-// GROUP BY hour, hostname ORDER BY hour
+// GroupByTimeAndPrimaryTag selects the AVG of one cpu metric/all cpu metrics per device per hour for 12 hours
 func (d *Devops) GroupByTimeAndPrimaryTag(qi query.Query, numMetrics int) {
-	//todo: implement for redistimeseries
-	/*
-	metrics := devops.GetCPUMetricsSlice(numMetrics)
+	if numMetrics != 1 && numMetrics != devops.GetCPUMetricsLen() {
+		log.Fatal("Supports only 1 cpu metric or all cpu metrics")
+	}
 	interval := d.Interval.RandWindow(devops.DoubleGroupByDuration)
 
-	selectClauses := make([]string, numMetrics)
-	meanClauses := make([]string, numMetrics)
-	for i, m := range metrics {
-		meanClauses[i] = "mean_" + m
-		selectClauses[i] = fmt.Sprintf("avg(%s) as %s", m, meanClauses[i])
+	redisQuery := fmt.Sprintf(`TS.MRANGE %d %d AGGREGATION avg %d FILTER measurement=cpu`,
+		interval.Start.Unix(),
+		interval.End.Unix(),
+		oneHour)
+
+	// add specific fieldname if needed. Currently only one cpu metric is supported.
+	if numMetrics == 1 {
+		redisQuery += " fieldname="
+		redisQuery += devops.GetCPUMetricsSlice(1)[0]
 	}
 
-	hostnameField := "hostname"
-	joinStr := ""
-	if d.UseJSON || d.UseTags {
-		if d.UseJSON {
-			hostnameField = "tags->>'hostname'"
-		} else if d.UseTags {
-			hostnameField = "tags.hostname"
-		}
-		joinStr = "JOIN tags ON cpu_avg.tags_id = tags.id"
-	}
-
-	sql := fmt.Sprintf(`
-        WITH cpu_avg AS (
-          SELECT %s as hour, tags_id,
-          %s
-          FROM cpu
-          WHERE time >= '%s' AND time < '%s'
-          GROUP BY hour, tags_id
-        )
-        SELECT hour, %s, %s
-        FROM cpu_avg
-        %s
-        ORDER BY hour, %s`,
-		d.getTimeBucket(oneHour),
-		strings.Join(selectClauses, ", "),
-		interval.Start.Format(goTimeFmt), interval.End.Format(goTimeFmt),
-		hostnameField, strings.Join(meanClauses, ", "),
-		joinStr, hostnameField)
 	humanLabel := devops.GetDoubleGroupByLabel("RedisTimeSeries", numMetrics)
 	humanDesc := fmt.Sprintf("%s: %s", humanLabel, interval.StartString())
-	d.fillInQuery(qi, humanLabel, humanDesc, sql)
-	*/
+	d.fillInQuery(qi, humanLabel, humanDesc, redisQuery)
 }
 
 // MaxAllCPU fetches the aggregate across all CPU metrics per hour over 1 hour for a single host.

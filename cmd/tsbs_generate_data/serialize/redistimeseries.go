@@ -1,10 +1,13 @@
 package serialize
+
 import (
+	"fmt"
 	"io"
 )
 // RedisTimeSeriesSerializer writes a Point in a serialized form for RedisTimeSeries
 type RedisTimeSeriesSerializer struct{}
 
+var keysSoFar map[string]bool
 // Serialize writes Point data to the given writer, in a format that will be easy to create a redis-timeseries command
 // from.
 //
@@ -13,6 +16,9 @@ type RedisTimeSeriesSerializer struct{}
 //
 // Which the loader will decode into a set of TS.ADD commands for each fieldKey.
 func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error) {
+	if keysSoFar == nil {
+		keysSoFar = make(map[string]bool)
+	}
 	// Construct labels text, prefixed with name 'LABELS', following pairs of label names and label values
 	// This will be added to each key, with additional "fieldname" tag
 	labels := make([]byte, 0, 256)
@@ -47,17 +53,23 @@ func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error)
 	for fieldID := 0; fieldID < len(p.fieldKeys); fieldID++ {
 		fieldName := p.fieldKeys[fieldID]
 		fieldValue := p.fieldValues[fieldID]
+		keyName := fmt.Sprintf("%s_%s%s", p.measurementName, fieldName, labelsForKeyName)
 		// write unique key name
-		buf = append(buf, p.measurementName...)
-		buf = append(buf, '_')
-		buf = fastFormatAppend(fieldName, buf)
-		buf = append(buf, labelsForKeyName...)
+		buf = append(buf, keyName...)
 		buf = append(buf, ' ')
+
 		// write timestamp
 		buf = fastFormatAppend(p.timestamp.UTC().Unix(), buf)
 		buf = append(buf, ' ')
 		// write value
 		buf = fastFormatAppend(fieldValue, buf)
+
+		// if this key was already inserted and created, we don't to specify the labels again
+		if keysSoFar[keyName] {
+			buf = append(buf, '\n')
+			continue
+		}
+		keysSoFar[fmt.Sprintf("%s_%s%s", p.measurementName, fieldName, labelsForKeyName)] = true
 		buf = append(buf, labels...)
 		// additional label of fieldname
 		buf = append(buf, []byte(" fieldname ")...)

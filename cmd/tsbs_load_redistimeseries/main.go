@@ -43,7 +43,9 @@ type RedisIndexer struct{
 func (i *RedisIndexer) GetIndex(p *load.Point) int {
 	row := p.Data.(string)
 	key := strings.Split(row, " ")[0]
-	_, _ = io.WriteString(md5h, key)
+	start := strings.Index(key,"{")
+	end := strings.Index(key,"}")
+	_, _ = io.WriteString(md5h,  key[start+1:end])
 	hash := binary.LittleEndian.Uint32(md5h.Sum(nil))
 	md5h.Reset()
 	return int(uint(hash) % i.partitions)

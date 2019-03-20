@@ -65,17 +65,16 @@ func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error)
 		buf = fastFormatAppend(fieldValue, buf)
 
 		// if this key was already inserted and created, we don't to specify the labels again
-		if keysSoFar[keyName] {
-			buf = append(buf, '\n')
-			continue
+		if !keysSoFar[keyName] {
+			keysSoFar[fmt.Sprintf("%s_%s%s", p.measurementName, fieldName, labelsForKeyName)] = true
+			buf = append(buf, labels...)
+			// additional label of fieldname
+			buf = append(buf, []byte(" fieldname ")...)
+			buf = fastFormatAppend(fieldName, buf)
 		}
-		keysSoFar[fmt.Sprintf("%s_%s%s", p.measurementName, fieldName, labelsForKeyName)] = true
-		buf = append(buf, labels...)
-		// additional label of fieldname
-		buf = append(buf, []byte(" fieldname ")...)
-		buf = fastFormatAppend(fieldName, buf)
-		buf = append(buf, '\n')
+		buf = append(buf, ';')
 	}
+	buf = append(buf, '\n')
 
 	_, err = w.Write(buf)
 	return err

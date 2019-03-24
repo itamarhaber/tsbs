@@ -1,6 +1,8 @@
 package serialize
 
 import (
+	"crypto/md5"
+	"encoding/binary"
 	"fmt"
 	"io"
 )
@@ -12,7 +14,7 @@ var keysSoFar map[string]bool
 // from.
 //
 // This function writes output that looks like:
-//cpu_usage_user{hostname=host_0|region=eu-central-1...} 1451606400000000000 58 LABELS hostname host_0 region eu-central-1 ... measurement cpu fieldname usage_user
+//cpu_usage_user{md5(hostname=host_0|region=eu-central-1...)} 1451606400 58 LABELS hostname host_0 region eu-central-1 ... measurement cpu fieldname usage_user
 //
 // Which the loader will decode into a set of TS.ADD commands for each fieldKey.
 func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error) {
@@ -20,7 +22,7 @@ func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error)
 		keysSoFar = make(map[string]bool)
 	}
 	// Construct labels text, prefixed with name 'LABELS', following pairs of label names and label values
-	// This will be added to each key, with additional "fieldname" tag
+	// This will be added to each new key, with additional "fieldname" tag
 	labels := make([]byte, 0, 256)
 	labelsForKeyName:= make([]byte, 0, 256)
 	labels = append(labels, []byte(" LABELS")...)
@@ -30,7 +32,7 @@ func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error)
 		labels = append(labels, ' ')
 		labels = append(labels, v...)
 
-		// construct a string of {hostname=host_1,region=us-west-1,...} to be used as unique name for key
+		// construct a string of {hostname=host_1,region=us-west-1,...} to be used for unique name for key
 		if i > 0 {
 			labelsForKeyName = append(labelsForKeyName, '|')
 		} else {
@@ -48,14 +50,22 @@ func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error)
 	labels = append(labels, []byte(" measurement ")... )
 	labels = append(labels, p.measurementName...)
 
-	// Write new line for each fieldKey in the form of: measurementName_fieldName timestamp fieldValue LABELS ....
+	// Write new line for each fieldKey in the form of: measurementName_fieldName{md5 of labels} timestamp fieldValue LABELS ....
 	buf := make([]byte, 0, 256)
 	for fieldID := 0; fieldID < len(p.fieldKeys); fieldID++ {
 		fieldName := p.fieldKeys[fieldID]
 		fieldValue := p.fieldValues[fieldID]
 		keyName := fmt.Sprintf("%s_%s%s", p.measurementName, fieldName, labelsForKeyName)
 		// write unique key name
-		buf = append(buf, keyName...)
+		labelsHash := md5.Sum([]byte(labelsForKeyName))
+		buf = append(buf, p.measurementName...)
+		buf = append(buf, '_')
+		buf = append(buf, fieldName...)
+
+		buf = append(buf, '{')
+		buf = fastFormatAppend(int(binary.BigEndian.Uint32(labelsHash[:])), buf)
+		buf = append(buf, '}')
+
 		buf = append(buf, ' ')
 
 		// write timestamp
@@ -66,18 +76,18 @@ func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error)
 
 		// if this key was already inserted and created, we don't to specify the labels again
 		if keysSoFar[keyName] {
-			buf = append(buf, '\n')
+			buf = append(buf, ';')
 			continue
 		}
-		keysSoFar[fmt.Sprintf("%s_%s%s", p.measurementName, fieldName, labelsForKeyName)] = true
+		keysSoFar[keyName] = true
 		buf = append(buf, labels...)
 		// additional label of fieldname
 		buf = append(buf, []byte(" fieldname ")...)
 		buf = fastFormatAppend(fieldName, buf)
-		buf = append(buf, '\n')
+		buf = append(buf, ';')
 	}
-
+	buf = append(buf, '\n')
 	_, err = w.Write(buf)
+
 	return err
 }
-

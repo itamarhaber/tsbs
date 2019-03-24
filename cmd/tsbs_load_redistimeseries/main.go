@@ -43,7 +43,9 @@ type RedisIndexer struct{
 func (i *RedisIndexer) GetIndex(p *load.Point) int {
 	row := p.Data.(string)
 	key := strings.Split(row, " ")[0]
-	_, _ = io.WriteString(md5h, key)
+	start := strings.Index(key,"{")
+	end := strings.Index(key,"}")
+	_, _ = io.WriteString(md5h,  key[start+1:end])
 	hash := binary.LittleEndian.Uint32(md5h.Sum(nil))
 	md5h.Reset()
 	return int(uint(hash) % i.partitions)
@@ -80,9 +82,17 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 	cmdLen := 0
 	if doLoad {
 		conn := p.dbc.client.Pool.Get()
+		sent := []string{}
 		for _, row := range events.rows {
-			sendRedisCommand(row, conn)
-			cmdLen++
+			cmds := strings.Split(row,";")
+			for i := range cmds {
+				if strings.TrimSpace(cmds[i]) == "" {
+					continue
+				}
+				sent = append(sent, cmds[i])
+				sendRedisCommand(cmds[i], conn)
+				cmdLen++
+			}
 		}
 
 		err := conn.Flush()
@@ -93,15 +103,14 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 		for i := 0; i < cmdLen; i++ {
 			_, err = conn.Receive()
 			if err != nil {
-				log.Fatalf("Error while inserting: %v", err)
+				log.Fatalf("Error while inserting: %v, cmd: '%s'", err,sent[i])
 			}
 		}
 	}
 	rowCnt := uint64(len(events.rows))
-	metricCnt := rowCnt
 	events.rows = events.rows[:0]
 	ePool.Put(events)
-	return metricCnt, rowCnt
+	return uint64(cmdLen), rowCnt
 }
 
 

@@ -2,18 +2,19 @@ package main
 
 import (
 	"bufio"
+	"crypto/md5"
 	"encoding/binary"
 	"flag"
-	"github.com/timescale/tsbs/load"
 	"io"
 	"log"
 	"strings"
-	"crypto/md5"
+
+	"github.com/timescale/tsbs/load"
 )
 
 // Program option vars:
 var (
-	host        string
+	host string
 )
 
 // Global vars
@@ -21,6 +22,7 @@ var (
 	loader *load.BenchmarkRunner
 	//bufPool sync.Pool
 )
+
 // allows for testing
 var fatal = log.Fatal
 var md5h = md5.New()
@@ -36,16 +38,16 @@ type benchmark struct {
 	dbc *dbCreator
 }
 
-type RedisIndexer struct{
+type RedisIndexer struct {
 	partitions uint
 }
 
 func (i *RedisIndexer) GetIndex(p *load.Point) int {
 	row := p.Data.(string)
 	key := strings.Split(row, " ")[0]
-	start := strings.Index(key,"{")
-	end := strings.Index(key,"}")
-	_, _ = io.WriteString(md5h,  key[start+1:end])
+	start := strings.Index(key, "{")
+	end := strings.Index(key, "}")
+	_, _ = io.WriteString(md5h, key[start+1:end])
 	hash := binary.LittleEndian.Uint32(md5h.Sum(nil))
 	md5h.Reset()
 	return int(uint(hash) % i.partitions)
@@ -70,6 +72,7 @@ func (b *benchmark) GetProcessor() load.Processor {
 func (b *benchmark) GetDBCreator() load.DBCreator {
 	return b.dbc
 }
+
 type processor struct {
 	dbc *dbCreator
 }
@@ -82,37 +85,27 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 	cmdLen := 0
 	if doLoad {
 		conn := p.dbc.client.Pool.Get()
-		sent := []string{}
 		for _, row := range events.rows {
-			cmds := strings.Split(row,";")
+			cmds := strings.Split(row, ";")
 			for i := range cmds {
 				if strings.TrimSpace(cmds[i]) == "" {
 					continue
 				}
-				sent = append(sent, cmds[i])
 				sendRedisCommand(cmds[i], conn)
 				cmdLen++
 			}
 		}
-
 		err := conn.Flush()
 		if err != nil {
 			log.Fatalf("Error while inserting: %v", err)
 		}
 
-		for i := 0; i < cmdLen; i++ {
-			_, err = conn.Receive()
-			if err != nil {
-				log.Fatalf("Error while inserting: %v, cmd: '%s'", err,sent[i])
-			}
-		}
 	}
 	rowCnt := uint64(len(events.rows))
 	events.rows = events.rows[:0]
 	ePool.Put(events)
 	return uint64(cmdLen), rowCnt
 }
-
 
 func main() {
 	loader.RunBenchmark(&benchmark{dbc: &dbCreator{}}, load.WorkerPerQueue)

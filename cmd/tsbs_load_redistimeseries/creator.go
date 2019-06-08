@@ -1,15 +1,25 @@
 package main
 
 import (
-	redistimeseries "github.com/RedisTimeSeries/redistimeseries-go"
-)
+	radix "github.com/mediocregopher/radix"
+	"log"
+	"runtime"
+	)
 
 type dbCreator struct {
-	client *redistimeseries.Client
+	client *radix.Pool
+
 }
 
 func (d *dbCreator) Init() {
-	d.client = redistimeseries.NewClient(host, "test_client", nil)
+
+	// multiply parallel with GOMAXPROCS to get the actual number of goroutines and thus
+	// connections needed for the benchmarks.
+	parallel := runtime.GOMAXPROCS(0)
+	poolSize := parallel * runtime.GOMAXPROCS(0)
+	d.client, _ = radix.NewPool("tcp", host, poolSize, nil)
+	log.Print("Using pool size of ", poolSize )
+
 }
 
 func (d *dbCreator) DBExists(dbName string) bool {
@@ -17,8 +27,7 @@ func (d *dbCreator) DBExists(dbName string) bool {
 }
 
 func (d *dbCreator) RemoveOldDB(dbName string) error {
-	 conn := d.client.Pool.Get()
-	 _, err := conn.Do("FLUSHALL")
+	err := d.client.Do(radix.Cmd(nil, "FLUSHALL"))
 	 return err
 }
 
@@ -27,6 +36,5 @@ func (d *dbCreator) CreateDB(dbName string) error {
 }
 
 func (d *dbCreator) Close() {
-	conn := d.client.Pool.Get()
-	conn.Close()
+	d.client.Close()
 }

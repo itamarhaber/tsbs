@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"encoding/binary"
 	"flag"
+	"github.com/mediocregopher/radix"
 	"github.com/timescale/tsbs/load"
 	"io"
 	"log"
+	"os"
+	"runtime/pprof"
 	"strings"
 	"crypto/md5"
 )
@@ -81,39 +84,51 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 	events := b.(*eventsBatch)
 	cmdLen := 0
 	if doLoad {
-		conn := p.dbc.client.Pool.Get()
 		sent := []string{}
+		pipeline_commands := []radix.CmdAction{}
+
 		for _, row := range events.rows {
+
 			cmds := strings.Split(row,";")
 			for i := range cmds {
 				if strings.TrimSpace(cmds[i]) == "" {
 					continue
 				}
+
+				t := strings.Split(cmds[i], " ")
+
+				pipeline_commands = append( pipeline_commands,radix.Cmd(nil, "TS.ADD", t...))
+
 				sent = append(sent, cmds[i])
-				sendRedisCommand(cmds[i], conn)
 				cmdLen++
 			}
 		}
 
-		err := conn.Flush()
-		if err != nil {
-			log.Fatalf("Error while inserting: %v", err)
+		pipeline := radix.Pipeline(
+			pipeline_commands...
+		)
+		if err := p.dbc.client.Do(pipeline); err != nil {
+			log.Fatalf("Error while inserting: ",err)
 		}
 
-		for i := 0; i < cmdLen; i++ {
-			_, err = conn.Receive()
-			if err != nil {
-				log.Fatalf("Error while inserting: %v, cmd: '%s'", err,sent[i])
-			}
-		}
 	}
 	rowCnt := uint64(len(events.rows))
 	events.rows = events.rows[:0]
 	ePool.Put(events)
 	return uint64(cmdLen), rowCnt
 }
-
+var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to `file`")
+var memprofile = flag.String("memprofile", "", "write memory profile to `file`")
 
 func main() {
-	loader.RunBenchmark(&benchmark{dbc: &dbCreator{}}, load.WorkerPerQueue)
+	flag.Parse()
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+	loader.RunBenchmark(&benchmark{dbc: &dbCreator{}}, 0)
 }

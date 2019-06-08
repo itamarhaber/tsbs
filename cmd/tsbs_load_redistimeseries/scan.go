@@ -5,8 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
-
-	"github.com/gomodule/redigo/redis"
+	radix "github.com/mediocregopher/radix"
 	"github.com/timescale/tsbs/load"
 )
 
@@ -27,13 +26,13 @@ func (d *decoder) Decode(_ *bufio.Reader) *load.Point {
 	return load.NewPoint(d.scanner.Text())
 }
 
-func sendRedisCommand(line string, conn redis.Conn) {
+func sendRedisCommand(line string, conn *radix.Pool) {
 	t := strings.Split(line, " ")
-	s := make([]interface{}, len(t))
-	for i, v := range t {
-		s[i] = v
-	}
-	err := conn.Send("TS.ADD", s...)
+	//s := make([]interface{}, len(t))
+	//for i, v := range t {
+	//		s[i] = v
+	//}
+	err := conn.Do (radix.Cmd(nil, "TS.ADD", t...))
 	if err != nil {
 		log.Fatalf("TS.ADD failed: %s\n", err)
 	}

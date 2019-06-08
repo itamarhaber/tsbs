@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"runtime/pprof"
 	"strings"
 	"crypto/md5"
@@ -17,6 +18,8 @@ import (
 // Program option vars:
 var (
 	host        string
+	poolSize int
+	poolPipelineConcurrency int
 )
 
 // Global vars
@@ -32,6 +35,9 @@ var md5h = md5.New()
 func init() {
 	loader = load.GetBenchmarkRunnerWithBatchSize(1000)
 	flag.StringVar(&host, "host", "localhost:6379", "Provide host:port for redis connection")
+	flag.IntVar(&poolPipelineConcurrency,"poolPipelineConcurrency",0, "PoolPipelineConcurrency for redis connection")
+	flag.IntVar(&poolSize,"poolSize",runtime.GOMAXPROCS(0), "poolSize for redis connection")
+
 	flag.Parse()
 }
 
@@ -86,7 +92,7 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 	if doLoad {
 		sent := []string{}
 		pipeline_commands := []radix.CmdAction{}
-
+		//defer p.dbc.client.Close()
 		for _, row := range events.rows {
 
 			cmds := strings.Split(row,";")

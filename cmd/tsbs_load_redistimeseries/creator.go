@@ -1,24 +1,25 @@
 package main
 
 import (
-	radix "github.com/mediocregopher/radix"
+	"github.com/mediocregopher/radix"
 	"log"
-	"runtime"
-	)
+)
 
 type dbCreator struct {
 	client *radix.Pool
-
 }
 
 func (d *dbCreator) Init() {
 
 	// multiply parallel with GOMAXPROCS to get the actual number of goroutines and thus
 	// connections needed for the benchmarks.
-	parallel := runtime.GOMAXPROCS(0)
-	poolSize := parallel * runtime.GOMAXPROCS(0)
-	d.client, _ = radix.NewPool("tcp", host, poolSize, nil)
-	log.Print("Using pool size of ", poolSize )
+
+	poolOptions := []radix.PoolOpt{
+		radix.PoolPipelineConcurrency(poolPipelineConcurrency),
+	}
+	d.client, _ = radix.NewPool("tcp", host, poolSize, poolOptions...)
+	log.Print("Using pool size of ", poolSize)
+	log.Print("Using PoolPipelineConcurrency size of ", poolPipelineConcurrency)
 
 }
 
@@ -28,7 +29,7 @@ func (d *dbCreator) DBExists(dbName string) bool {
 
 func (d *dbCreator) RemoveOldDB(dbName string) error {
 	err := d.client.Do(radix.Cmd(nil, "FLUSHALL"))
-	 return err
+	return err
 }
 
 func (d *dbCreator) CreateDB(dbName string) error {

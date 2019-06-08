@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"strings"
@@ -16,7 +17,9 @@ import (
 
 // Program option vars:
 var (
-	host string
+	host        string
+	connections uint64
+	pipeline    uint64
 )
 
 // Global vars
@@ -33,6 +36,8 @@ var md5h = md5.New()
 func init() {
 	loader = load.GetBenchmarkRunnerWithBatchSize(1000)
 	flag.StringVar(&host, "host", "localhost:6379", "Provide host:port for redis connection")
+	flag.Uint64Var(&connections, "connections", 10, "Provide the number of connections per worker")
+	flag.Uint64Var(&pipeline, "pipline", 50, "Provide the pipeline size")
 	flag.Parse()
 }
 
@@ -76,64 +81,81 @@ func (b *benchmark) GetDBCreator() load.DBCreator {
 }
 
 type processor struct {
-	dbc      *dbCreator
-	commands chan string
-	results  chan string
-	wg       *sync.WaitGroup
+	dbc     *dbCreator
+	rows    chan string
+	metrics chan uint64
+	wg      *sync.WaitGroup
 }
 
-func redisInserter(wg *sync.WaitGroup, commands chan string, results chan string, conn redis.Conn) {
-	// log.Printf("Inserter started\n")
-	for i := 0; i < 200; i++ {
-		metric := <-commands
-		sendRedisCommand(metric, conn)
+func rtsAdder(wg *sync.WaitGroup, rows chan string, metrics chan uint64, conn redis.Conn, load uint64, id uint64) {
+	curPipe := uint64(0)
+	// log.Printf("rts %v starts", id)
+	for i := uint64(0); i < load; i++ {
+		// log.Printf("rts %v reads row", id)
+		row := <-rows
+		cmds := strings.Split(row, ";")
+		for j := range cmds {
+			if strings.TrimSpace(cmds[j]) == "" {
+				continue
+			}
+			curPipe++
+			sendRedisCommand(cmds[j], conn)
+		}
+
+		if curPipe >= pipeline {
+			conn.Flush()
+			for k := uint64(0); k < curPipe; k++ {
+				conn.Receive()
+			}
+			metrics <- curPipe
+			curPipe = 0
+			// log.Printf("rts %v flush", id)
+		}
 	}
-	conn.Flush()
-	for i := 0; i < 200; i++ {
-		val, _ := redis.String(conn.Receive())
-		results <- val
+	if curPipe > 0 {
+		conn.Flush()
+		for k := uint64(0); k < curPipe; k++ {
+			conn.Receive()
+		}
+		metrics <- curPipe
 	}
 	wg.Done()
-	// log.Printf("Inserter done\n")
 }
 
-func (p *processor) Init(_ int, _ bool) {
-}
+func (p *processor) Init(_ int, _ bool) {}
 
 // ProcessBatch reads eventsBatches which contain rows of data for TS.ADD redis command string
 func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 	events := b.(*eventsBatch)
 	rowCnt := uint64(len(events.rows))
-	cmdLen := 0
+	metricCnt := uint64(0)
 	if doLoad {
-		// conn := p.dbc.client.Pool.Get()
-		// sent := []string{}
-		buflen := rowCnt*10 + 1 // assuming 10 metrics per row, +1 for buffered non-blocking
-		p.commands = make(chan string, buflen)
-		p.results = make(chan string, buflen)
+		buflen := rowCnt + 1
+		p.rows = make(chan string, buflen)
+		p.metrics = make(chan uint64, buflen*10)
 		p.wg = &sync.WaitGroup{}
-		for i := 0; i < 5; i++ {
+		load := rowCnt / connections
+		for i := uint64(0); i < connections; i++ {
 			conn := p.dbc.client.Pool.Get()
+			defer conn.Close()
 			p.wg.Add(1)
-			go redisInserter(p.wg, p.commands, p.results, conn)
+			if i == connections-1 {
+				load += rowCnt & connections
+			}
+			go rtsAdder(p.wg, p.rows, p.metrics, conn, load, i)
 		}
 
 		for _, row := range events.rows {
-			cmds := strings.Split(row, ";")
-			for i := range cmds {
-				if strings.TrimSpace(cmds[i]) == "" {
-					continue
-				}
-				// sent = append(sent, cmds[i])
-				// sendRedisCommand(cmds[i], conn)
-				p.commands <- cmds[i]
-			}
+			p.rows <- row
 		}
-		close(p.commands)
+
+		close(p.rows)
 		p.wg.Wait()
-		// log.Printf("Wait done\n")
-		cmdLen = len(p.results)
-		close(p.results)
+		close(p.metrics)
+
+		for val := range p.metrics {
+			metricCnt += val
+		}
 		// err := conn.Flush()
 		// if err != nil {
 		// 	log.Fatalf("Error while inserting: %v", err)
@@ -148,12 +170,44 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 	}
 	events.rows = events.rows[:0]
 	ePool.Put(events)
-	return uint64(cmdLen), rowCnt
+	return metricCnt, rowCnt
 }
 
 func (p *processor) Close(_ bool) {
 }
 
+func verifyRun() {
+	conn, err := redis.DialURL(fmt.Sprintf("redis://%s", host))
+	if err != nil {
+		log.Fatalf("Error while dialing %v", err)
+	}
+	_, err = conn.Do("PING")
+	if err != nil {
+		log.Fatalf("Error while PING %v", err)
+	}
+
+	cursor := 0
+	total := 0
+	for {
+		rep, _ := redis.Values(conn.Do("SCAN", cursor))
+		cursor, _ = redis.Int(rep[0], nil)
+		keys, _ := redis.Strings(rep[1], nil)
+		for _, key := range keys {
+			total++
+			info, _ := redis.Values(conn.Do("TS.INFO", key))
+			chunks, _ := redis.Int(info[5], nil)
+			if chunks != 30 {
+				log.Printf("Verification error: key %v has %v chunks\n", key, chunks)
+			}
+		}
+		if cursor == 0 {
+			break
+		}
+	}
+	log.Printf("Verified %v keys\n", total)
+}
+
 func main() {
 	loader.RunBenchmark(&benchmark{dbc: &dbCreator{}}, load.WorkerPerQueue)
+	verifyRun()
 }

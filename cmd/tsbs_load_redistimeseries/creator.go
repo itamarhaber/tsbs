@@ -16,10 +16,9 @@ func (d *dbCreator) DBExists(dbName string) bool {
 	return true
 }
 
+// Isn't supported with interleaved groups?
 func (d *dbCreator) RemoveOldDB(dbName string) error {
-	 conn := d.client.Pool.Get()
-	 _, err := conn.Do("FLUSHALL")
-	 return err
+	return nil
 }
 
 func (d *dbCreator) CreateDB(dbName string) error {

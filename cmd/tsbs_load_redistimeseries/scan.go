@@ -29,15 +29,42 @@ func (d *decoder) Decode(_ *bufio.Reader) *load.Point {
 
 func sendRedisCommand(line string, conn redis.Conn) {
 	t := strings.Split(line, " ")
-	s := make([]interface{}, len(t))
-	for i, v := range t {
-		s[i] = v
-	}
-	err := conn.Send("TS.ADD", s...)
+	s := redis.Args{}.AddFlat(t[1:])
+	err := conn.Send(t[0], s...)
 	if err != nil {
-		log.Fatalf("TS.ADD failed: %s\n", err)
+		log.Fatalf("sendRedisCommand %s failed: %s\n", t[0], err)
 	}
 }
+
+func sendRedisFlush(count uint64, conn redis.Conn) (metrics uint64, err error) {
+	metrics = uint64(0)
+	err = conn.Flush()
+	if err != nil {
+		return
+	}
+	for i := uint64(0); i < count; i++ {
+		rep, err := conn.Receive()
+		if err != nil {
+			return 0, err
+		}
+		arr, err := redis.Values(rep, nil)
+		if err != nil {
+			if err == redis.ErrNil {
+				log.Print("Unexpected nil from Receive()")
+			}
+			// Values failed, so this is a single timeseries metric or zadd metric, or xadd
+			if dataModel == "redistimeseries" || dataModel == "rediszsetmetric" {
+				metrics++
+			} else {
+				metrics += 10 // zsetdevice/stream has 10 metrics
+			}
+		} else {
+			metrics += uint64(len(arr)) // ts.madd
+		}
+	}
+	return metrics, nil
+}
+
 type eventsBatch struct {
 	rows []string
 }

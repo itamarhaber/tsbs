@@ -3,14 +3,11 @@ package serialize
 import (
 	"crypto/md5"
 	"encoding/binary"
-	"fmt"
 	"io"
 )
 
-// RedisTimeSeriesSerializer writes a Point in a serialized form for RedisTimeSeries
-type RedisTimeSeriesSerializer struct{}
-
-var keysSoFar map[string]bool
+// RedisStreamSerializer writes a Point in a serialized form for streams
+type RedisStreamSerializer struct{}
 
 // Serialize writes Point data to the given writer, in a format that will be easy to create a redis-timeseries command
 // from.
@@ -20,10 +17,7 @@ var keysSoFar map[string]bool
 //
 // Which the loader will decode into a set of TS.ADD commands for each fieldKey. Once labels have been created for a each fieldKey,
 // subsequent rows are ommitted with them and are ingested with TS.MADD for a row's metrics.
-func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error) {
-	if keysSoFar == nil {
-		keysSoFar = make(map[string]bool)
-	}
+func (s *RedisStreamSerializer) Serialize(p *Point, w io.Writer) (err error) {
 	// Construct labels text, prefixed with name 'LABELS', following pairs of label names and label values
 	// This will be added to each new key, with additional "fieldname" tag
 	labels := make([]byte, 0, 256)
@@ -53,49 +47,31 @@ func (s *RedisTimeSeriesSerializer) Serialize(p *Point, w io.Writer) (err error)
 	labels = append(labels, []byte(" measurement ")...)
 	labels = append(labels, p.measurementName...)
 
-	// Write new line for each fieldKey in the form of: measurementName_fieldName{md5 of labels} timestamp fieldValue LABELS ....
+	// Write new line for each device in the form of: XADD deviceName{md5 of labels} timestamp measurement value ...
 	buf := make([]byte, 0, 256)
+	labelsHash := md5.Sum([]byte(labelsForKeyName))
+	buf = append(buf, []byte("XADD ")...)
+	buf = append(buf, p.measurementName...)
+	buf = append(buf, '{')
+	buf = fastFormatAppend(int(binary.BigEndian.Uint32(labelsHash[:])), buf)
+	buf = append(buf, '}')
+	buf = append(buf, ' ')
+
+	// write timestamp
+	// buf = fastFormatAppend(p.timestamp.UTC().Unix(), buf)
+	buf = append(buf, '*') // TODO: resolve race condition
+	buf = append(buf, ' ')
+
 	for fieldID := 0; fieldID < len(p.fieldKeys); fieldID++ {
-		lbuf := make([]byte, 0, 256)
 		fieldName := p.fieldKeys[fieldID]
 		fieldValue := p.fieldValues[fieldID]
-		keyName := fmt.Sprintf("%s_%s%s", p.measurementName, fieldName, labelsForKeyName)
-		// write unique key name
-		labelsHash := md5.Sum([]byte(labelsForKeyName))
-		lbuf = append(lbuf, p.measurementName...)
-		lbuf = append(lbuf, '_')
-		lbuf = append(lbuf, fieldName...)
-
-		lbuf = append(lbuf, '{')
-		lbuf = fastFormatAppend(int(binary.BigEndian.Uint32(labelsHash[:])), lbuf)
-		lbuf = append(lbuf, '}')
-
-		lbuf = append(lbuf, ' ')
-
-		// write timestamp
-		lbuf = fastFormatAppend(p.timestamp.UTC().Unix(), lbuf)
-		lbuf = append(lbuf, ' ')
-		// write value
-		lbuf = fastFormatAppend(fieldValue, lbuf)
-
-		// if this key was already inserted and created, we don't to specify the labels again
-		if keysSoFar[keyName] {
-			lbuf = append(lbuf, ' ')
-			buf = append(buf, lbuf...)
-			continue
-		}
-		keysSoFar[keyName] = true
-		lbuf = append([]byte("TS.ADD "), lbuf...)
-		lbuf = append(lbuf, labels...)
-		// additional label of fieldname
-		lbuf = append(lbuf, []byte(" fieldname ")...)
-		lbuf = fastFormatAppend(fieldName, lbuf)
-		lbuf = append(lbuf, '\n')
-		buf = append(buf, lbuf...)
+		buf = append(buf, fieldName...)
+		buf = append(buf, ' ')
+		buf = fastFormatAppend(fieldValue, buf)
+		buf = append(buf, ' ')
 	}
 	if buf[len(buf)-1] == ' ' {
 		buf[len(buf)-1] = '\n'
-		buf = append([]byte("TS.MADD "), buf...)
 	}
 	_, err = w.Write(buf)
 

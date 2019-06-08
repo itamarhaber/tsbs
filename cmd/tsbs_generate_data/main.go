@@ -34,13 +34,16 @@ import (
 
 const (
 	// Output data format choices (alphabetical order)
-	formatCassandra   = "cassandra"
-	formatClickhouse  = "clickhouse"
-	formatInflux      = "influx"
-	formatMongo       = "mongo"
+	formatCassandra       = "cassandra"
+	formatClickhouse      = "clickhouse"
+	formatInflux          = "influx"
+	formatMongo           = "mongo"
 	formatRedisTimeSeries = "redistimeseries"
-	formatSiriDB      = "siridb"
-	formatTimescaleDB = "timescaledb"
+	formatRedisZsetDevice = "rediszsetdevice"
+	formatRedisZsetMetric = "rediszsetmetric"
+	formatRedisStream     = "redisstream"
+	formatSiriDB          = "siridb"
+	formatTimescaleDB     = "timescaledb"
 
 	// Use case choices (make sure to update TestGetConfig if adding a new one)
 	useCaseCPUOnly   = "cpu-only"
@@ -62,6 +65,9 @@ var (
 		formatInflux,
 		formatMongo,
 		formatRedisTimeSeries,
+		formatRedisZsetDevice,
+		formatRedisZsetMetric,
+		formatRedisStream,
 		formatSiriDB,
 		formatTimescaleDB,
 	}
@@ -322,6 +328,12 @@ func getSerializer(sim common.Simulator, format string, out *bufio.Writer) seria
 		return &serialize.MongoSerializer{}
 	case formatRedisTimeSeries:
 		return &serialize.RedisTimeSeriesSerializer{}
+	case formatRedisZsetDevice:
+		return &serialize.RedisZsetDeviceSerializer{}
+	case formatRedisZsetMetric:
+		return &serialize.RedisZsetMetricSerializer{}
+	case formatRedisStream:
+		return &serialize.RedisStreamSerializer{}
 	case formatSiriDB:
 		return &serialize.SiriDBSerializer{}
 	case formatClickhouse:

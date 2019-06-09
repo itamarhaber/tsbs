@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -37,7 +38,7 @@ func init() {
 	loader = load.GetBenchmarkRunnerWithBatchSize(1000)
 	flag.StringVar(&host, "host", "localhost:6379", "Provide host:port for redis connection")
 	flag.Uint64Var(&connections, "connections", 10, "Provide the number of connections per worker")
-	flag.Uint64Var(&pipeline, "pipline", 50, "Provide the pipeline size")
+	flag.Uint64Var(&pipeline, "pipeline", 50, "Provide the pipeline size")
 	flag.Parse()
 }
 
@@ -82,17 +83,15 @@ func (b *benchmark) GetDBCreator() load.DBCreator {
 
 type processor struct {
 	dbc     *dbCreator
-	rows    chan string
+	rows    []chan string
 	metrics chan uint64
 	wg      *sync.WaitGroup
 }
 
-func rtsAdder(wg *sync.WaitGroup, rows chan string, metrics chan uint64, conn redis.Conn, load uint64, id uint64) {
+func rtsAdder(wg *sync.WaitGroup, rows chan string, metrics chan uint64, conn redis.Conn, id uint64) {
 	curPipe := uint64(0)
 	// log.Printf("rts %v starts", id)
-	for i := uint64(0); i < load; i++ {
-		// log.Printf("rts %v reads row", id)
-		row := <-rows
+	for row := range rows {
 		cmds := strings.Split(row, ";")
 		for j := range cmds {
 			if strings.TrimSpace(cmds[j]) == "" {
@@ -100,16 +99,21 @@ func rtsAdder(wg *sync.WaitGroup, rows chan string, metrics chan uint64, conn re
 			}
 			curPipe++
 			sendRedisCommand(cmds[j], conn)
-		}
-
-		if curPipe >= pipeline {
-			conn.Flush()
-			for k := uint64(0); k < curPipe; k++ {
-				conn.Receive()
+			if curPipe >= pipeline {
+				err := conn.Flush()
+				if err != nil {
+					log.Printf("Flushing failed %v", err)
+				}
+				for k := uint64(0); k < curPipe; k++ {
+					_, err = conn.Receive()
+					if err != nil {
+						log.Printf("Receiving failed %v", err)
+					}
+				}
+				metrics <- curPipe
+				curPipe = 0
+				// log.Printf("rts %v flush", id)
 			}
-			metrics <- curPipe
-			curPipe = 0
-			// log.Printf("rts %v flush", id)
 		}
 	}
 	if curPipe > 0 {
@@ -129,27 +133,33 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 	events := b.(*eventsBatch)
 	rowCnt := uint64(len(events.rows))
 	metricCnt := uint64(0)
+	// indexer := &RedisIndexer{partitions: uint(connections)}
 	if doLoad {
 		buflen := rowCnt + 1
-		p.rows = make(chan string, buflen)
+		p.rows = make([]chan string, connections)
 		p.metrics = make(chan uint64, buflen*10)
 		p.wg = &sync.WaitGroup{}
-		load := rowCnt / connections
 		for i := uint64(0); i < connections; i++ {
 			conn := p.dbc.client.Pool.Get()
 			defer conn.Close()
+			p.rows[i] = make(chan string, buflen)
 			p.wg.Add(1)
-			if i == connections-1 {
-				load += rowCnt & connections
-			}
-			go rtsAdder(p.wg, p.rows, p.metrics, conn, load, i)
+			go rtsAdder(p.wg, p.rows[i], p.metrics, conn, i)
 		}
 
 		for _, row := range events.rows {
-			p.rows <- row
+			// i := indexer.GetIndex(load.NewPoint(row))
+			key := strings.Split(row, " ")[0]
+			start := strings.Index(key, "{")
+			end := strings.Index(key, "}")
+			tag, _ := strconv.ParseUint(key[start+1:end], 10, 64)
+			i := tag % connections
+			p.rows[i] <- row
 		}
 
-		close(p.rows)
+		for i := uint64(0); i < connections; i++ {
+			close(p.rows[i])
+		}
 		p.wg.Wait()
 		close(p.metrics)
 

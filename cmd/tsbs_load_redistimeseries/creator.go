@@ -15,11 +15,11 @@ func (d *dbCreator) Init() {
 	// connections needed for the benchmarks.
 
 	poolOptions := []radix.PoolOpt{
-		radix.PoolPipelineConcurrency(poolPipelineConcurrency),
+		radix.PoolPipelineConcurrency(int(pipeline)),
 	}
-	d.client, _ = radix.NewPool("tcp", host, poolSize, poolOptions...)
-	log.Print("Using pool size of ", poolSize)
-	log.Print("Using PoolPipelineConcurrency size of ", poolPipelineConcurrency)
+	d.client, _ = radix.NewPool("tcp", host, int(connections), poolOptions...)
+	log.Print("Using pool size of ", connections)
+	log.Print("Using PoolPipelineConcurrency size of ", pipeline)
 
 }
 

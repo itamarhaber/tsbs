@@ -43,6 +43,31 @@ func sendRedisCommand(line string, conn redis.Conn) {
 	}
 }
 
+func sendRedisFlush(count uint64, conn redis.Conn) (metrics uint64, err error) {
+	metrics = uint64(0)
+	err = conn.Flush()
+	if err != nil {
+		return
+	}
+	for i := uint64(0); i < count; i++ {
+		rep, err := conn.Receive()
+		if err != nil {
+			return 0, err
+		}
+		arr, err := redis.Values(rep, nil)
+		if err != nil {
+			if err == redis.ErrNil {
+				log.Print("Unexpected nil from Receive()")
+			}
+			// Values failed, so this is a single metric
+			metrics++
+		} else {
+			metrics += uint64(len(arr))
+		}
+	}
+	return metrics, nil
+}
+
 type eventsBatch struct {
 	rows []string
 }

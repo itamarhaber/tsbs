@@ -21,6 +21,7 @@ var (
 	host        string
 	connections uint64
 	pipeline    uint64
+	checkData   bool
 )
 
 // Global vars
@@ -36,9 +37,10 @@ var md5h = md5.New()
 // Parse args:
 func init() {
 	loader = load.GetBenchmarkRunnerWithBatchSize(1000)
-	flag.StringVar(&host, "host", "localhost:6379", "Provide host:port for redis connection")
-	flag.Uint64Var(&connections, "connections", 10, "Provide the number of connections per worker")
-	flag.Uint64Var(&pipeline, "pipeline", 50, "Provide the pipeline size")
+	flag.StringVar(&host, "host", "localhost:6379", "The host:port for Redis connection")
+	flag.Uint64Var(&connections, "connections", 10, "The number of connections per worker")
+	flag.Uint64Var(&pipeline, "pipeline", 50, "The pipeline size")
+	flag.BoolVar(&checkData, "check-data", false, "Whether to perform post ingestion verification")
 	flag.Parse()
 }
 
@@ -91,48 +93,23 @@ type processor struct {
 func rtsAdder(wg *sync.WaitGroup, rows chan string, metrics chan uint64, conn redis.Conn, id uint64) {
 	curPipe := uint64(0)
 	for row := range rows {
-		sendRedisCommand(row, conn)
-		curPipe++
-		if curPipe >= pipeline {
-			err := conn.Flush()
+		if curPipe == pipeline {
+			cnt, err := sendRedisFlush(curPipe, conn)
 			if err != nil {
-				log.Printf("Flushing failed %v", err)
+				log.Fatalf("Flush failed with %v", err)
 			}
-			metCnt := uint64(0)
-			for k := uint64(0); k < curPipe; k++ {
-				rep, err := conn.Receive()
-				if err != nil {
-					log.Printf("Receiving failed %v", err)
-				}
-				arr, err := redis.Values(rep, nil)
-				if err != nil {
-					if err == redis.ErrNil {
-						log.Print("Unexpected NIL from Receive()")
-					}
-					// Values failed, so this is a single metric
-					metCnt++
-				} else {
-					metCnt += uint64(len(arr))
-				}
-			}
-			// assert curPipe <= metCnt
-			metrics <- metCnt
+			metrics <- cnt
 			curPipe = 0
 		}
+		sendRedisCommand(row, conn)
+		curPipe++
 	}
-	// Perform a final flush
 	if curPipe > 0 {
-		err := conn.Flush()
+		cnt, err := sendRedisFlush(curPipe, conn)
 		if err != nil {
-			log.Printf("Flushing failed %v", err)
+			log.Fatalf("Flush failed with %v", err)
 		}
-		for k := uint64(0); k < curPipe; k++ {
-			_, err = conn.Receive()
-			if err != nil {
-				log.Printf("Receiving failed %v", err)
-			}
-		}
-		metrics <- curPipe
+		metrics <- cnt
 	}
 	wg.Done()
 }
@@ -148,7 +125,7 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 	if doLoad {
 		buflen := rowCnt + 1
 		p.rows = make([]chan string, connections)
-		p.metrics = make(chan uint64, buflen*10)
+		p.metrics = make(chan uint64, buflen)
 		p.wg = &sync.WaitGroup{}
 		for i := uint64(0); i < connections; i++ {
 			conn := p.dbc.client.Pool.Get()
@@ -159,7 +136,6 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 		}
 
 		for _, row := range events.rows {
-			// i := indexer.GetIndex(load.NewPoint(row))
 			key := strings.Split(row, " ")[0]
 			start := strings.Index(key, "{")
 			end := strings.Index(key, "}")
@@ -177,17 +153,6 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 		for val := range p.metrics {
 			metricCnt += val
 		}
-		// err := conn.Flush()
-		// if err != nil {
-		// 	log.Fatalf("Error while inserting: %v", err)
-		// }
-
-		// for i := 0; i < cmdLen; i++ {
-		// 	_, err = conn.Receive()
-		// 	if err != nil {
-		// 		log.Fatalf("Error while inserting: %v, cmd: '%s'", err, sent[i])
-		// 	}
-		// }
 	}
 	events.rows = events.rows[:0]
 	ePool.Put(events)
@@ -197,7 +162,8 @@ func (p *processor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) {
 func (p *processor) Close(_ bool) {
 }
 
-func verifyRun() {
+func runCheckData() {
+	log.Println("Running post ingestion data check")
 	conn, err := redis.DialURL(fmt.Sprintf("redis://%s", host))
 	if err != nil {
 		log.Fatalf("Error while dialing %v", err)
@@ -218,17 +184,19 @@ func verifyRun() {
 			info, _ := redis.Values(conn.Do("TS.INFO", key))
 			chunks, _ := redis.Int(info[5], nil)
 			if chunks != 30 {
-				log.Printf("Verification error: key %v has %v chunks\n", key, chunks)
+				log.Printf("Verification error: key %v has %v chunks", key, chunks)
 			}
 		}
 		if cursor == 0 {
 			break
 		}
 	}
-	log.Printf("Verified %v keys\n", total)
+	log.Printf("Verified %v keys", total)
 }
 
 func main() {
 	loader.RunBenchmark(&benchmark{dbc: &dbCreator{}}, load.WorkerPerQueue)
-	verifyRun()
+	if checkData {
+		runCheckData()
+	}
 }

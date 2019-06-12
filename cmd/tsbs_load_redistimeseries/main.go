@@ -90,36 +90,47 @@ type processor struct {
 
 func rtsAdder(wg *sync.WaitGroup, rows chan string, metrics chan uint64, conn redis.Conn, id uint64) {
 	curPipe := uint64(0)
-	// log.Printf("rts %v starts", id)
 	for row := range rows {
-		cmds := strings.Split(row, ";")
-		for j := range cmds {
-			if strings.TrimSpace(cmds[j]) == "" {
-				continue
+		sendRedisCommand(row, conn)
+		curPipe++
+		if curPipe >= pipeline {
+			err := conn.Flush()
+			if err != nil {
+				log.Printf("Flushing failed %v", err)
 			}
-			curPipe++
-			sendRedisCommand(cmds[j], conn)
-			if curPipe >= pipeline {
-				err := conn.Flush()
+			metCnt := uint64(0)
+			for k := uint64(0); k < curPipe; k++ {
+				rep, err := conn.Receive()
 				if err != nil {
-					log.Printf("Flushing failed %v", err)
+					log.Printf("Receiving failed %v", err)
 				}
-				for k := uint64(0); k < curPipe; k++ {
-					_, err = conn.Receive()
-					if err != nil {
-						log.Printf("Receiving failed %v", err)
+				arr, err := redis.Values(rep, nil)
+				if err != nil {
+					if err == redis.ErrNil {
+						log.Print("Unexpected NIL from Receive()")
 					}
+					// Values failed, so this is a single metric
+					metCnt++
+				} else {
+					metCnt += uint64(len(arr))
 				}
-				metrics <- curPipe
-				curPipe = 0
-				// log.Printf("rts %v flush", id)
 			}
+			// assert curPipe <= metCnt
+			metrics <- metCnt
+			curPipe = 0
 		}
 	}
+	// Perform a final flush
 	if curPipe > 0 {
-		conn.Flush()
+		err := conn.Flush()
+		if err != nil {
+			log.Printf("Flushing failed %v", err)
+		}
 		for k := uint64(0); k < curPipe; k++ {
-			conn.Receive()
+			_, err = conn.Receive()
+			if err != nil {
+				log.Printf("Receiving failed %v", err)
+			}
 		}
 		metrics <- curPipe
 	}

@@ -28,16 +28,21 @@ func (d *decoder) Decode(_ *bufio.Reader) *load.Point {
 }
 
 func sendRedisCommand(line string, conn redis.Conn) {
+	c := "TS.MADD"
 	t := strings.Split(line, " ")
 	s := make([]interface{}, len(t))
 	for i, v := range t {
 		s[i] = v
+		if v == "LABELS" {
+			c = "TS.ADD"
+		}
 	}
-	err := conn.Send("TS.ADD", s...)
+	err := conn.Send(c, s...)
 	if err != nil {
-		log.Fatalf("TS.ADD failed: %s\n", err)
+		log.Fatalf("sendRedisCommand %s failed: %s\n", c, err)
 	}
 }
+
 type eventsBatch struct {
 	rows []string
 }
